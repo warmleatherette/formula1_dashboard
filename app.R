@@ -1,45 +1,25 @@
 # ============================================================
 # FORMULA 1 SHINY DASHBOARD
-# Fully integrated and annotated version
+# Fully annotated version
 # ============================================================
 #
-# This app contains:
-#   1. Race Winners
+# Tabs:
+#   1. Race Podiums
 #   2. Driver Head-to-Head
 #   3. World Championships
 #   4. Driver Analysis
-#   5. Reliability & DNF Analysis
+#   5. Reliability & DNFs
 #
-# Expected folder structure:
-#
-#   f1_data/
-#   |-- f1_dashboard_annotated_full.R
-#   `-- data/
-#       |-- races.csv
-#       |-- results.csv
-#       |-- drivers.csv
-#       |-- constructors.csv
-#       |-- status.csv
-#       |-- driver_standings.csv
-#       `-- constructor_standings.csv
-#
+# Required CSV files are listed in README.md.
 # ============================================================
 
-
 # ------------------------------------------------------------
-# 0. INSTALL REQUIRED PACKAGES
+# 0. INSTALL AND LOAD PACKAGES
 # ------------------------------------------------------------
-#
-# The vector below lists every package required by the dashboard.
-# installed.packages() is checked first so packages are installed
-# only when they are missing.
+# Install only packages that are not already available.
 
 required_packages <- c(
-  "shiny",
-  "tidytable",
-  "janitor",
-  "ggplot2",
-  "plotly"
+  "shiny", "tidytable", "janitor", "ggplot2", "plotly"
 )
 
 missing_packages <- required_packages[
@@ -47,22 +27,8 @@ missing_packages <- required_packages[
 ]
 
 if (length(missing_packages) > 0) {
-  install.packages(
-    missing_packages,
-    dependencies = TRUE
-  )
+  install.packages(missing_packages, dependencies = TRUE)
 }
-
-
-# ------------------------------------------------------------
-# LOAD REQUIRED PACKAGES
-# ------------------------------------------------------------
-#
-# shiny: builds the interactive web application.
-# tidytable: performs filtering, joins, mutation and summaries.
-# janitor: cleans imported column names.
-# ggplot2: creates charts.
-# plotly: makes selected ggplot charts interactive.
 
 library(shiny)
 library(tidytable)
@@ -70,9 +36,12 @@ library(janitor)
 library(ggplot2)
 library(plotly)
 
-# ============================================================
-# 1. IMPORT DATA
-# ============================================================
+
+# ------------------------------------------------------------
+# 1. IMPORT SOURCE TABLES
+# ------------------------------------------------------------
+# read_f1_csv() applies the same path, missing-value and naming
+# rules to every source file.
 
 read_f1_csv <- function(file_name) {
   file_path <- file.path("data", file_name)
@@ -99,6 +68,7 @@ status <- read_f1_csv("status.csv")
 driver_standings <- read_f1_csv("driver_standings.csv")
 constructor_standings <- read_f1_csv("constructor_standings.csv")
 
+# Convert variables used in arithmetic and comparisons.
 races <- races |>
   tidytable::mutate(
     year = as.integer(year),
@@ -110,66 +80,40 @@ results <- results |>
     position = as.integer(position),
     position_order = as.integer(position_order),
     grid = as.integer(grid),
-    points = as.numeric(points)
-  )
-
-driver_standings <- driver_standings |>
-  tidytable::mutate(
-    position = as.integer(position),
     points = as.numeric(points),
-    wins = as.integer(wins)
+    laps = as.integer(laps)
   )
 
-constructor_standings <- constructor_standings |>
-  tidytable::mutate(
-    position = as.integer(position),
-    points = as.numeric(points),
-    wins = as.integer(wins)
-  )
+for (object_name in c("driver_standings", "constructor_standings")) {
+  object_value <- get(object_name) |>
+    tidytable::mutate(
+      position = as.integer(position),
+      points = as.numeric(points),
+      wins = as.integer(wins)
+    )
+  assign(object_name, object_value)
+}
 
-# ============================================================
-# 2. LOOKUP TABLES
-#
-# Purpose:
-#   Convert database-style IDs into human-readable labels for the app.
-#
-# race_lookup:
-#   Keeps race_id plus year, round, race name and date.
-# driver_lookup:
-#   Keeps driver_id and creates both a display name and surname-first
-#   dropdown label.
-# constructor_lookup:
-#   Maps constructor_id to constructor_name.
-# status_lookup:
-#   Maps status_id to the exact result description from status.csv.
-#
-# These smaller tables are joined onto results later, keeping the data
-# lineage clear and avoiding unnecessary source columns.
-# ============================================================
+
+# ------------------------------------------------------------
+# 2. CREATE LOOKUP TABLES
+# ------------------------------------------------------------
+# These tables replace IDs with readable labels while keeping
+# the joins small and easy to inspect.
 
 race_lookup <- races |>
   tidytable::rename(
     race_name = name,
     race_date = date
   ) |>
-  tidytable::select(
-    race_id,
-    year,
-    round,
-    race_name,
-    race_date
-  )
+  tidytable::select(race_id, year, round, race_name, race_date)
 
 driver_lookup <- drivers |>
   tidytable::mutate(
     driver_name = paste(forename, surname),
     driver_label = paste0(surname, ", ", forename)
   ) |>
-  tidytable::select(
-    driver_id,
-    driver_name,
-    driver_label
-  )
+  tidytable::select(driver_id, driver_name, driver_label)
 
 constructor_lookup <- constructors |>
   tidytable::rename(constructor_name = name) |>
@@ -179,25 +123,13 @@ status_lookup <- status |>
   tidytable::rename(race_status = status) |>
   tidytable::select(status_id, race_status)
 
-# ============================================================
-# 3. COLOURS AND DISPLAY FUNCTIONS
-#
-# Purpose:
-#   Keep presentation rules separate from the underlying race data.
-#
-# constructor_colours:
-#   Named vector used for winner cards and championship rows.
-# get_team_colour():
-#   Looks up a constructor colour and falls back to grey if missing.
-# get_text_colour():
-#   Calculates whether black or white text gives better contrast.
-# create_result_label():
-#   Converts each race result into a classified position, DNF or DNS.
-# create_dnf_category():
-#   Creates broad reliability categories for summary analysis.
-# create_dnf_subcategory():
-#   Retains the exact status.csv reason for detailed DNF analysis.
-# ============================================================
+
+# ------------------------------------------------------------
+# 3. DISPLAY METADATA AND RESULT CLASSIFICATION
+# ------------------------------------------------------------
+# Constructor colours are presentation metadata. The podium
+# background communicates position; the inner driver card keeps
+# the selected driver's constructor colour.
 
 constructor_colours <- c(
   "Ferrari" = "#E80020",
@@ -224,23 +156,16 @@ constructor_colours <- c(
 
 get_team_colour <- function(constructor_name) {
   colour <- unname(constructor_colours[constructor_name])
-  
-  if (length(colour) == 0 || is.na(colour)) {
-    colour <- "#666666"
-  }
-  
-  colour
+  if (length(colour) == 0 || is.na(colour)) "#666666" else colour
 }
 
 get_text_colour <- function(background_colour) {
   rgb_values <- grDevices::col2rgb(background_colour)
-  
   brightness <- (
     rgb_values[1] * 299 +
       rgb_values[2] * 587 +
       rgb_values[3] * 114
   ) / 1000
-  
   if (brightness > 150) "#000000" else "#FFFFFF"
 }
 
@@ -249,12 +174,8 @@ create_result_label <- function(position, race_status) {
   
   did_not_start <- grepl(
     paste(
-      "did not start",
-      "did not qualify",
-      "did not prequalify",
-      "withdrawn",
-      "excluded",
-      sep = "|"
+      "did not start", "did not qualify", "did not prequalify",
+      "withdrawn", "excluded", sep = "|"
     ),
     status_text
   )
@@ -267,37 +188,28 @@ create_result_label <- function(position, race_status) {
 }
 
 create_dnf_category <- function(result_label, race_status) {
+  status_text <- tolower(ifelse(is.na(race_status), "", race_status))
+  
   tidytable::case_when(
     result_label != "DNF" ~ NA_character_,
-    grepl(
-      "accident|collision|spun",
-      race_status,
-      ignore.case = TRUE
-    ) ~ "Accident / Collision",
+    grepl("accident|collision|spun", status_text) ~
+      "Accident / Collision",
     grepl(
       paste0(
-        "engine|gearbox|transmission|hydraulic|suspension|",
-        "brake|oil|water|fuel|clutch|driveshaft|differential|",
-        "power unit|turbo|overheating|radiator"
+        "engine|power unit|turbo|gearbox|transmission|clutch|",
+        "driveshaft|differential|hydraulic|suspension|brake|",
+        "steering|throttle|fuel|oil|water|radiator|overheating"
       ),
-      race_status,
-      ignore.case = TRUE
+      status_text
     ) ~ "Mechanical",
-    grepl(
-      "electrical|electronics|battery|alternator",
-      race_status,
-      ignore.case = TRUE
-    ) ~ "Electrical",
-    grepl(
-      "tyre|tire|puncture|wheel",
-      race_status,
-      ignore.case = TRUE
-    ) ~ "Tyre / Wheel",
+    grepl("electrical|electronics|battery|alternator", status_text) ~
+      "Electrical",
+    grepl("puncture|tyre|tire|wheel", status_text) ~ "Tyre / Wheel",
     TRUE ~ "Other"
   )
 }
 
-
+# Keep the exact source description for detailed DNF reporting.
 create_dnf_subcategory <- function(result_label, race_status) {
   tidytable::case_when(
     result_label == "DNF" ~ race_status,
@@ -305,25 +217,12 @@ create_dnf_subcategory <- function(result_label, race_status) {
   )
 }
 
-# ============================================================
-# 4. DASHBOARD-READY DATA
-#
-# Purpose:
-#   Build the main analysis tables used by every dashboard tab.
-#
-# race_results starts from results because results has one row per driver
-# per race. Lookups then add race, driver, constructor and status labels.
-# Derived fields add DNF/DNS labels, positions gained, DNF categories and
-# retirement timing.
-#
-# final_races identifies the last race_id in each season. This is used to
-# keep only end-of-season driver and constructor championship standings.
-#
-# driver_season_constructor supplies a constructor colour for each driver
-# championship row, using the driver's final constructor in that season.
-#
-# comparison_years restricts Head-to-Head to the latest 20 seasons.
-# ============================================================
+
+# ------------------------------------------------------------
+# 4. CREATE DASHBOARD-READY TABLES
+# ------------------------------------------------------------
+# results.csv is the central fact table: one row represents one
+# driver in one race. The lookups add readable labels.
 
 race_results <- results |>
   tidytable::left_join(race_lookup, by = "race_id") |>
@@ -337,24 +236,28 @@ race_results <- results |>
     positions_gained = tidytable::case_when(
       grid > 0 & !is.na(position) ~ grid - position,
       TRUE ~ NA_integer_
-    )
-  ) |>
-  tidytable::mutate(
+    ),
     dnf_category = create_dnf_category(result_label, race_status),
-    dnf_subcategory = create_dnf_subcategory(result_label, race_status),
-    mechanical_dnf = result_label == "DNF" &
-      dnf_category %in% c("Mechanical", "Electrical", "Tyre / Wheel"),
-    completed_laps = as.integer(laps),
+    dnf_subcategory = create_dnf_subcategory(
+      result_label,
+      race_status
+    ),
+    technical_dnf = result_label == "DNF" &
+      dnf_category %in% c(
+        "Mechanical", "Electrical", "Tyre / Wheel"
+      ),
     retirement_phase = tidytable::case_when(
       result_label != "DNF" ~ NA_character_,
-      completed_laps <= 1 ~ "Opening lap",
-      completed_laps <= 10 ~ "Early race",
-      completed_laps <= 40 ~ "Middle race",
-      completed_laps > 40 ~ "Late race",
+      laps <= 1 ~ "Opening lap",
+      laps <= 10 ~ "Early race",
+      laps <= 40 ~ "Middle race",
+      laps > 40 ~ "Late race",
       TRUE ~ "Unknown"
     )
   )
 
+# The standings files contain records after every round. Join
+# them to the last race_id in each season to keep final results.
 final_races <- race_lookup |>
   tidytable::filter(!is.na(year), !is.na(round)) |>
   tidytable::filter(round == max(round, na.rm = TRUE), .by = year) |>
@@ -370,6 +273,8 @@ constructor_championship_final <- constructor_standings |>
   tidytable::left_join(constructor_lookup, by = "constructor_id") |>
   tidytable::arrange(year, position)
 
+# Use each driver's final constructor of the season to colour
+# their championship row.
 driver_season_constructor <- race_results |>
   tidytable::filter(!is.na(year), !is.na(driver_id)) |>
   tidytable::filter(
@@ -392,36 +297,21 @@ comparison_years <- race_results |>
   tidytable::slice_head(n = 20) |>
   tidytable::pull(year)
 
-# ============================================================
+
+# ------------------------------------------------------------
 # 5. USER INTERFACE
-#
-# Purpose:
-#   Define what the user sees and can interact with.
-#
-# navbarPage() contains five tabs. Controls such as selectInput() create
-# input values that the server reads. uiOutput(), tableOutput(),
-# plotOutput() and plotlyOutput() are placeholders populated by server.
-#
-# Race Winners:
-#   Season selector plus coloured winner cards.
-# Driver Head-to-Head:
-#   Season and two driver selectors, comparison metrics, result chart and
-#   race-by-race table.
-# World Championships:
-#   One season selector controlling final driver and constructor tables.
-# Driver Analysis:
-#   Career metrics and charts, including the interactive grid/finish plot.
-# Reliability & DNFs:
-#   Driver/constructor reliability filters, DNF charts and detail tables.
-# ============================================================
+# ------------------------------------------------------------
+# Each inputId becomes input$<id> in server. Each output
+# placeholder links to an output$<id> render function.
 
 ui <- shiny::navbarPage(
   title = "Formula 1 Dashboard",
   
+  # Race Podiums replaces the former Race Winners tab.
   shiny::tabPanel(
-    title = "Race Winners",
+    title = "Race Podiums",
     shiny::fluidPage(
-      shiny::titlePanel("Formula 1 Race Winners"),
+      shiny::titlePanel("Formula 1 Race Podiums"),
       shiny::selectInput(
         "overview_year",
         "Select season:",
@@ -429,7 +319,7 @@ ui <- shiny::navbarPage(
         selected = max(race_results$year, na.rm = TRUE)
       ),
       shiny::hr(),
-      shiny::uiOutput("overview_winners")
+      shiny::uiOutput("overview_podiums")
     )
   ),
   
@@ -544,8 +434,8 @@ ui <- shiny::navbarPage(
           6,
           shiny::h3("Grid position vs finishing position"),
           shiny::selectInput(
-            inputId = "grid_finish_year",
-            label = "Select season:",
+            "grid_finish_year",
+            "Select season:",
             choices = NULL
           ),
           plotly::plotlyOutput(
@@ -597,7 +487,7 @@ ui <- shiny::navbarPage(
         shiny::column(3, shiny::uiOutput("reliability_starts")),
         shiny::column(3, shiny::uiOutput("reliability_dnfs")),
         shiny::column(3, shiny::uiOutput("reliability_dnf_rate")),
-        shiny::column(3, shiny::uiOutput("reliability_mechanical"))
+        shiny::column(3, shiny::uiOutput("reliability_technical"))
       ),
       shiny::fluidRow(
         shiny::column(
@@ -608,7 +498,7 @@ ui <- shiny::navbarPage(
         shiny::column(
           6,
           shiny::h3("Actual status from status.csv"),
-          shiny::plotOutput("dnf_subcategory_chart", height = "420px")
+          shiny::plotOutput("dnf_status_chart", height = "420px")
         )
       ),
       shiny::fluidRow(
@@ -625,7 +515,6 @@ ui <- shiny::navbarPage(
       ),
       shiny::conditionalPanel(
         condition = "input.reliability_type == 'Constructor'",
-        shiny::hr(),
         shiny::h2("Constructor reliability"),
         shiny::fluidRow(
           shiny::column(
@@ -638,35 +527,25 @@ ui <- shiny::navbarPage(
           ),
           shiny::column(
             6,
-            shiny::h3("Constructor reliability by season"),
-            shiny::tableOutput(
-              "constructor_reliability_table"
-            )
+            shiny::h3("Reliability by season"),
+            shiny::tableOutput("constructor_reliability_table")
           )
         )
       ),
-      shiny::hr(),
       shiny::h3("Individual DNFs"),
       shiny::tableOutput("dnf_detail_table")
     )
   )
 )
 
-# ============================================================
+
+# ------------------------------------------------------------
 # 6. SERVER
-#
-# Purpose:
-#   Connect UI inputs to filtered data, calculations, charts and tables.
-#
-# reactive() objects recalculate only when their dependent inputs change.
-# observeEvent() is used where changing one input must update another UI
-# control, such as rebuilding the available driver or season choices.
-# renderUI(), renderTable(), renderPlot() and renderPlotly() create the
-# outputs placed in the matching UI placeholders.
-# ============================================================
+# ------------------------------------------------------------
 
 server <- function(input, output, session) {
-  # Reusable HTML card used for headline statistics throughout the app.
+  
+  # Reusable summary card.
   metric_box <- function(title, text) {
     shiny::div(
       style = paste0(
@@ -676,14 +555,11 @@ server <- function(input, output, session) {
         "margin-bottom:15px;padding:15px;"
       ),
       shiny::h4(title),
-      shiny::div(
-        text,
-        style = "font-size:16px;font-weight:bold;"
-      )
+      shiny::div(text, style = "font-size:16px;font-weight:bold;")
     )
   }
   
-  # Reusable coloured row used by both championship standings tables.
+  # Reusable coloured championship row.
   championship_row <- function(
     position,
     name,
@@ -697,10 +573,8 @@ server <- function(input, output, session) {
     shiny::div(
       style = paste0(
         "display:grid;grid-template-columns:50px 1fr 85px 65px;",
-        "align-items:center;background-color:",
-        team_colour,
-        ";color:",
-        text_colour,
+        "align-items:center;background-color:", team_colour,
+        ";color:", text_colour,
         ";border-radius:5px;margin-bottom:5px;padding:10px;"
       ),
       shiny::strong(position),
@@ -710,7 +584,6 @@ server <- function(input, output, session) {
     )
   }
   
-  # Creates a consistent four-column header above championship rows.
   championship_header <- function(name_heading) {
     shiny::div(
       style = paste0(
@@ -725,57 +598,123 @@ server <- function(input, output, session) {
   }
   
   # ----------------------------------------------------------
-  # 6A. RACE WINNERS
+  # 6A. RACE PODIUMS
   # ----------------------------------------------------------
-  #
-  # overview_data() filters race_results to the selected season.
-  # overview_winners then keeps position == 1, orders races by round and
-  # creates one constructor-coloured card for every winner.
+  # overview_data() filters once. overview_podiums keeps the top
+  # three and builds one responsive three-column card per race.
   
   overview_data <- shiny::reactive({
     shiny::req(input$overview_year)
-    
     race_results |>
       tidytable::filter(year == as.integer(input$overview_year))
   })
   
-  output$overview_winners <- shiny::renderUI({
-    winners <- overview_data() |>
-      tidytable::filter(position == 1) |>
+  output$overview_podiums <- shiny::renderUI({
+    podiums <- overview_data() |>
+      tidytable::filter(position %in% 1:3) |>
+      tidytable::arrange(round, position)
+    
+    shiny::validate(
+      shiny::need(
+        nrow(podiums) > 0,
+        "No podium information is available for this season."
+      )
+    )
+    
+    races_with_podiums <- podiums |>
+      tidytable::distinct(race_id, round, race_name) |>
       tidytable::arrange(round)
     
-    if (nrow(winners) == 0) {
-      return(shiny::p("No race-winner information is available."))
-    }
-    
     shiny::tagList(
-      lapply(seq_len(nrow(winners)), function(i) {
-        team_colour <- get_team_colour(winners$constructor_name[i])
-        text_colour <- get_text_colour(team_colour)
+      lapply(seq_len(nrow(races_with_podiums)), function(i) {
+        race_data <- podiums |>
+          tidytable::filter(
+            race_id == races_with_podiums$race_id[i]
+          ) |>
+          tidytable::arrange(position)
+        
+        create_podium_column <- function(
+    position_number,
+    podium_colour,
+    position_label,
+    driver_font_size
+        ) {
+          result <- race_data |>
+            tidytable::filter(position == position_number)
+          
+          if (nrow(result) == 0) {
+            return(
+              shiny::div(
+                style = paste0(
+                  "flex:1;background-color:", podium_colour,
+                  ";padding:15px;text-align:center;"
+                ),
+                shiny::strong(position_label),
+                shiny::tags$br(),
+                shiny::span("No result available")
+              )
+            )
+          }
+          
+          team_colour <- get_team_colour(result$constructor_name[1])
+          team_text_colour <- get_text_colour(team_colour)
+          
+          shiny::div(
+            style = paste0(
+              "flex:1;background-color:", podium_colour,
+              ";padding:15px;text-align:center;min-width:0;"
+            ),
+            shiny::div(
+              position_label,
+              style = paste0(
+                "font-size:18px;font-weight:bold;",
+                "margin-bottom:12px;color:#202124;"
+              )
+            ),
+            shiny::div(
+              style = paste0(
+                "background-color:", team_colour,
+                ";color:", team_text_colour,
+                ";border-radius:6px;padding:12px 8px;"
+              ),
+              shiny::div(
+                result$driver_name[1],
+                style = paste0(
+                  "font-size:", driver_font_size,
+                  ";font-weight:bold;"
+                )
+              ),
+              shiny::div(
+                result$constructor_name[1],
+                style = "font-size:13px;margin-top:4px;"
+              )
+            )
+          )
+        }
         
         shiny::div(
           style = paste0(
-            "background-color:",
-            team_colour,
-            ";color:",
-            text_colour,
-            ";border-radius:8px;margin-bottom:10px;padding:15px;"
+            "border:1px solid #dddddd;border-radius:8px;",
+            "overflow:hidden;margin-bottom:18px;"
           ),
-          shiny::strong(
-            paste0(
-              "Round ",
-              winners$round[i],
-              ": ",
-              winners$race_name[i]
+          shiny::div(
+            style = paste0(
+              "background-color:#202124;color:white;",
+              "padding:12px 15px;"
+            ),
+            shiny::strong(
+              paste0(
+                "Round ", races_with_podiums$round[i], ": ",
+                races_with_podiums$race_name[i]
+              )
             )
           ),
-          shiny::tags$br(),
-          shiny::span(
-            winners$driver_name[i],
-            style = "font-size:18px;font-weight:bold;"
-          ),
-          shiny::tags$br(),
-          shiny::span(winners$constructor_name[i])
+          shiny::div(
+            style = "display:flex;width:100%;",
+            create_podium_column(1, "#FFD700", "1st", "20px"),
+            create_podium_column(2, "#C0C0C0", "2nd", "18px"),
+            create_podium_column(3, "#CD7F32", "3rd", "16px")
+          )
         )
       })
     )
@@ -784,17 +723,9 @@ server <- function(input, output, session) {
   # ----------------------------------------------------------
   # 6B. DRIVER HEAD-TO-HEAD
   # ----------------------------------------------------------
-  #
-  # season_drivers() identifies drivers who actually appear in the chosen
-  # season. observeEvent() rebuilds the two dropdowns and prevents the same
-  # driver being selected twice. selected_comparison() then filters to one
-  # season and those two drivers only. paired_comparison() joins them by
-  # race_id so the race result can be compared directly. Summary reactives
-  # feed wins, podiums, points, head-to-head score, chart and detail table.
   
   season_drivers <- shiny::reactive({
     shiny::req(input$comparison_year)
-    
     race_results |>
       tidytable::filter(
         year == as.integer(input$comparison_year),
@@ -808,7 +739,6 @@ server <- function(input, output, session) {
   shiny::observeEvent(input$comparison_year, {
     driver_data <- season_drivers()
     shiny::req(nrow(driver_data) >= 2)
-    
     shiny::updateSelectizeInput(
       session,
       "comparison_driver_1",
@@ -825,12 +755,10 @@ server <- function(input, output, session) {
     list(input$comparison_year, input$comparison_driver_1),
     {
       shiny::req(input$comparison_driver_1)
-      
       driver_data <- season_drivers() |>
         tidytable::filter(
           driver_id != as.integer(input$comparison_driver_1)
         )
-      
       shiny::updateSelectizeInput(
         session,
         "comparison_driver_2",
@@ -850,42 +778,29 @@ server <- function(input, output, session) {
       input$comparison_driver_1,
       input$comparison_driver_2
     )
-    
-    first_driver <- as.integer(input$comparison_driver_1)
-    second_driver <- as.integer(input$comparison_driver_2)
-    
-    shiny::validate(
-      shiny::need(
-        first_driver != second_driver,
-        "Select two different drivers."
-      )
+    ids <- as.integer(
+      c(input$comparison_driver_1, input$comparison_driver_2)
     )
-    
+    shiny::validate(
+      shiny::need(ids[1] != ids[2], "Select two different drivers.")
+    )
     race_results |>
       tidytable::filter(
         year == as.integer(input$comparison_year),
-        driver_id %in% c(first_driver, second_driver)
+        driver_id %in% ids
       ) |>
       tidytable::arrange(round, driver_name)
   })
   
   selected_driver_names <- shiny::reactive({
-    shiny::req(input$comparison_driver_1, input$comparison_driver_2)
-    
-    names <- driver_lookup |>
-      tidytable::filter(
-        driver_id %in% as.integer(
-          c(input$comparison_driver_1, input$comparison_driver_2)
-        )
-      )
-    
+    ids <- as.integer(
+      c(input$comparison_driver_1, input$comparison_driver_2)
+    )
+    data <- driver_lookup |>
+      tidytable::filter(driver_id %in% ids)
     list(
-      first = names$driver_name[
-        names$driver_id == as.integer(input$comparison_driver_1)
-      ][1],
-      second = names$driver_name[
-        names$driver_id == as.integer(input$comparison_driver_2)
-      ][1]
+      first = data$driver_name[data$driver_id == ids[1]][1],
+      second = data$driver_name[data$driver_id == ids[2]][1]
     )
   })
   
@@ -893,10 +808,7 @@ server <- function(input, output, session) {
     names <- selected_driver_names()
     shiny::h2(
       paste0(
-        names$first,
-        " vs ",
-        names$second,
-        ": ",
+        names$first, " vs ", names$second, ": ",
         input$comparison_year
       )
     )
@@ -911,9 +823,7 @@ server <- function(input, output, session) {
         driver_id == as.integer(input$comparison_driver_1)
       ) |>
       tidytable::select(
-        race_id,
-        round,
-        race_name,
+        race_id, round, race_name,
         first_order = position_order,
         first_result = result_label
       )
@@ -953,16 +863,12 @@ server <- function(input, output, session) {
   output$comparison_race_score <- shiny::renderUI({
     data <- paired_comparison()
     names <- selected_driver_names()
-    
     metric_box(
       "Race head-to-head",
       paste0(
-        names$first,
-        ": ",
-        sum(data$finished_ahead == names$first),
-        " | ",
-        names$second,
-        ": ",
+        names$first, ": ",
+        sum(data$finished_ahead == names$first), " | ",
+        names$second, ": ",
         sum(data$finished_ahead == names$second)
       )
     )
@@ -993,7 +899,7 @@ server <- function(input, output, session) {
   })
   
   output$comparison_position_chart <- shiny::renderPlot({
-    plot_data <- selected_comparison() |>
+    data <- selected_comparison() |>
       tidytable::mutate(
         plot_position = tidytable::case_when(
           result_label == "DNF" ~ 23,
@@ -1003,7 +909,7 @@ server <- function(input, output, session) {
       )
     
     ggplot2::ggplot(
-      plot_data,
+      data,
       ggplot2::aes(
         round,
         plot_position,
@@ -1014,7 +920,7 @@ server <- function(input, output, session) {
       ggplot2::geom_line(linewidth = 0.9) +
       ggplot2::geom_point(size = 3) +
       ggplot2::scale_x_continuous(
-        breaks = sort(unique(plot_data$round))
+        breaks = sort(unique(data$round))
       ) +
       ggplot2::scale_y_reverse(
         breaks = 1:24,
@@ -1032,55 +938,32 @@ server <- function(input, output, session) {
   
   output$comparison_table <- shiny::renderTable({
     names <- selected_driver_names()
-    
     data <- paired_comparison() |>
       tidytable::select(
-        round,
-        race_name,
-        first_result,
-        second_result,
-        finished_ahead
+        round, race_name, first_result,
+        second_result, finished_ahead
       )
-    
     names(data) <- c(
-      "Round",
-      "Race",
-      names$first,
-      names$second,
-      "Finished ahead"
+      "Round", "Race", names$first,
+      names$second, "Finished ahead"
     )
-    
     data
-  },
-  striped = TRUE,
-  hover = TRUE,
-  bordered = TRUE,
-  rownames = FALSE
-  )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, rownames = FALSE)
   
   # ----------------------------------------------------------
   # 6C. WORLD CHAMPIONSHIPS
   # ----------------------------------------------------------
-  #
-  # These outputs use driver_championship_final and
-  # constructor_championship_final, which were already restricted to each
-  # season's last race. The renderUI outputs create coloured standings rows
-  # using constructor_colours.
   
   output$driver_championship_table <- shiny::renderUI({
     data <- driver_championship_final |>
       tidytable::filter(year == as.integer(input$championship_year)) |>
       tidytable::arrange(position)
-    
     shiny::tagList(
       championship_header("Driver"),
       lapply(seq_len(nrow(data)), function(i) {
         championship_row(
-          data$position[i],
-          data$driver_name[i],
-          data$points[i],
-          data$wins[i],
-          data$constructor_name[i]
+          data$position[i], data$driver_name[i], data$points[i],
+          data$wins[i], data$constructor_name[i]
         )
       })
     )
@@ -1090,15 +973,12 @@ server <- function(input, output, session) {
     data <- constructor_championship_final |>
       tidytable::filter(year == as.integer(input$championship_year)) |>
       tidytable::arrange(position)
-    
     shiny::tagList(
       championship_header("Constructor"),
       lapply(seq_len(nrow(data)), function(i) {
         championship_row(
-          data$position[i],
-          data$constructor_name[i],
-          data$points[i],
-          data$wins[i],
+          data$position[i], data$constructor_name[i],
+          data$points[i], data$wins[i],
           data$constructor_name[i]
         )
       })
@@ -1108,19 +988,9 @@ server <- function(input, output, session) {
   # ----------------------------------------------------------
   # 6D. DRIVER ANALYSIS
   # ----------------------------------------------------------
-  #
-  # selected_driver_career() is the single filtered career dataset for the
-  # selected driver. driver_season_summary() aggregates it by season for
-  # starts, finishes, wins, podiums, points, DNFs and positions gained.
-  #
-  # grid_finish_year is rebuilt for the selected driver's career. The
-  # Plotly scatter chart then shows one season at a time, with hover text
-  # giving race, grid, finish and position change. The 1-22 axes stay fixed
-  # while the plot uses the full width of its Shiny column.
   
   selected_driver_career <- shiny::reactive({
     shiny::req(input$analysis_driver)
-    
     race_results |>
       tidytable::filter(
         driver_id == as.integer(input$analysis_driver)
@@ -1132,7 +1002,10 @@ server <- function(input, output, session) {
     selected_driver_career() |>
       tidytable::summarise(
         starts = sum(result_label != "DNS", na.rm = TRUE),
-        finishes = sum(!result_label %in% c("DNF", "DNS")),
+        finishes = sum(
+          !result_label %in% c("DNF", "DNS"),
+          na.rm = TRUE
+        ),
         wins = sum(position == 1, na.rm = TRUE),
         podiums = sum(position <= 3, na.rm = TRUE),
         points = sum(points, na.rm = TRUE),
@@ -1148,15 +1021,17 @@ server <- function(input, output, session) {
   
   career_summary <- shiny::reactive({
     data <- selected_driver_career()
-    starts <- sum(data$result_label != "DNS")
-    finishes <- sum(!data$result_label %in% c("DNF", "DNS"))
-    
+    starts <- sum(data$result_label != "DNS", na.rm = TRUE)
+    finishes <- sum(
+      !data$result_label %in% c("DNF", "DNS"),
+      na.rm = TRUE
+    )
     list(
       starts = starts,
       wins = sum(data$position == 1, na.rm = TRUE),
       podiums = sum(data$position <= 3, na.rm = TRUE),
       points = sum(data$points, na.rm = TRUE),
-      dnfs = sum(data$result_label == "DNF"),
+      dnfs = sum(data$result_label == "DNF", na.rm = TRUE),
       finish_rate = round(finishes / starts * 100, 1)
     )
   })
@@ -1177,7 +1052,10 @@ server <- function(input, output, session) {
     metric_box("DNFs", career_summary()$dnfs)
   })
   output$career_finish_rate <- shiny::renderUI({
-    metric_box("Finish rate", paste0(career_summary()$finish_rate, "%"))
+    metric_box(
+      "Finish rate",
+      paste0(career_summary()$finish_rate, "%")
+    )
   })
   
   output$career_results_chart <- shiny::renderPlot({
@@ -1190,7 +1068,6 @@ server <- function(input, output, session) {
         total = data$podiums
       )
     )
-    
     ggplot2::ggplot(
       plot_data,
       ggplot2::aes(year, total, fill = measure)
@@ -1212,26 +1089,21 @@ server <- function(input, output, session) {
   })
   
   shiny::observeEvent(input$analysis_driver, {
-    driver_years <- selected_driver_career() |>
-      tidytable::filter(!is.na(year)) |>
+    years <- selected_driver_career() |>
       tidytable::distinct(year) |>
       tidytable::arrange(tidytable::desc(year)) |>
       tidytable::pull(year)
-    
-    shiny::req(length(driver_years) > 0)
-    
     shiny::updateSelectInput(
-      session = session,
-      inputId = "grid_finish_year",
-      choices = driver_years,
-      selected = max(driver_years, na.rm = TRUE)
+      session,
+      "grid_finish_year",
+      choices = years,
+      selected = max(years, na.rm = TRUE)
     )
   })
   
   output$grid_finish_chart <- plotly::renderPlotly({
     shiny::req(input$grid_finish_year)
-    
-    plot_data <- selected_driver_career() |>
+    data <- selected_driver_career() |>
       tidytable::filter(
         year == as.integer(input$grid_finish_year),
         grid > 0,
@@ -1249,26 +1121,15 @@ server <- function(input, output, session) {
           "<br>Round: ", round,
           "<br>Grid: ", grid,
           "<br>Finish: ", position,
-          "<br>Positions gained/lost: ",
-          tidytable::case_when(
-            position_change > 0 ~ paste0("+", position_change),
-            TRUE ~ as.character(position_change)
-          )
+          "<br>Positions gained/lost: ", position_change
         )
       )
     
-    shiny::validate(
-      shiny::need(
-        nrow(plot_data) > 0,
-        "No grid and finishing-position data are available."
-      )
-    )
-    
     chart <- ggplot2::ggplot(
-      plot_data,
+      data,
       ggplot2::aes(
-        x = grid,
-        y = position,
+        grid,
+        position,
         colour = movement,
         text = hover_text
       )
@@ -1290,35 +1151,20 @@ server <- function(input, output, session) {
       ggplot2::scale_x_continuous(
         breaks = 1:22,
         limits = c(1, 22),
-        expand = ggplot2::expansion(
-          mult = c(0.03, 0.03)
-        )
+        expand = ggplot2::expansion(mult = c(0.03, 0.03))
       ) +
       ggplot2::scale_y_reverse(
         breaks = 1:22,
         limits = c(22, 1),
-        expand = ggplot2::expansion(
-          mult = c(0.03, 0.03)
-        )
+        expand = ggplot2::expansion(mult = c(0.03, 0.03))
       ) +
       ggplot2::labs(
-        title = paste0(
-          input$grid_finish_year,
-          " grid vs finishing position"
-        ),
-        subtitle = paste(
-          "Green points gained positions;",
-          "red points lost positions."
-        ),
         x = "Starting position",
         y = "Finishing position",
         colour = NULL
       ) +
       ggplot2::theme_minimal() +
-      ggplot2::theme(
-        legend.position = "bottom",
-        panel.grid.minor = ggplot2::element_blank()
-      )
+      ggplot2::theme(legend.position = "bottom")
     
     plotly::ggplotly(chart, tooltip = "text") |>
       plotly::config(displaylogo = FALSE)
@@ -1327,7 +1173,11 @@ server <- function(input, output, session) {
   output$positions_gained_chart <- shiny::renderPlot({
     ggplot2::ggplot(
       driver_season_summary(),
-      ggplot2::aes(year, positions_gained, fill = positions_gained >= 0)
+      ggplot2::aes(
+        year,
+        positions_gained,
+        fill = positions_gained >= 0
+      )
     ) +
       ggplot2::geom_col(show.legend = FALSE) +
       ggplot2::geom_hline(yintercept = 0, colour = "grey40") +
@@ -1346,28 +1196,11 @@ server <- function(input, output, session) {
         DNFs = dnfs,
         `Finish rate (%)` = finish_rate
       )
-  },
-  striped = TRUE,
-  hover = TRUE,
-  bordered = TRUE,
-  rownames = FALSE
-  )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, rownames = FALSE)
   
   # ----------------------------------------------------------
   # 6E. RELIABILITY AND DNF ANALYSIS
   # ----------------------------------------------------------
-  #
-  # reliability_type switches between Driver and Constructor. The matching
-  # selector is generated dynamically by reliability_entity_selector.
-  # selected_reliability() then filters race_results by entity and optional
-  # season. reliability_summary() calculates starts, total DNFs, DNF rate
-  # and technical DNFs.
-  #
-  # The DNF charts show broad categories, exact status.csv descriptions,
-  # retirement phase and DNF rate over time. Constructor mode additionally
-  # shows DNFs by driver and season-level constructor reliability statistics.
-  # The final table retains the original race_status so source detail is not
-  # lost by the broader analytical categories.
   
   output$reliability_entity_selector <- shiny::renderUI({
     if (input$reliability_type == "Driver") {
@@ -1382,7 +1215,6 @@ server <- function(input, output, session) {
     } else {
       data <- constructor_lookup |>
         tidytable::arrange(constructor_name)
-      
       shiny::selectizeInput(
         "reliability_entity",
         "Select constructor:",
@@ -1400,9 +1232,7 @@ server <- function(input, output, session) {
       input$reliability_entity,
       input$reliability_year
     )
-    
     entity_id <- as.integer(input$reliability_entity)
-    
     if (input$reliability_type == "Driver") {
       data <- race_results |>
         tidytable::filter(driver_id == entity_id)
@@ -1410,12 +1240,10 @@ server <- function(input, output, session) {
       data <- race_results |>
         tidytable::filter(constructor_id == entity_id)
     }
-    
     if (input$reliability_year != "All seasons") {
       data <- data |>
         tidytable::filter(year == as.integer(input$reliability_year))
     }
-    
     data
   })
   
@@ -1423,7 +1251,6 @@ server <- function(input, output, session) {
     data <- selected_reliability()
     starts <- sum(data$result_label != "DNS", na.rm = TRUE)
     dnfs <- sum(data$result_label == "DNF", na.rm = TRUE)
-    
     list(
       starts = starts,
       dnfs = dnfs,
@@ -1432,10 +1259,7 @@ server <- function(input, output, session) {
         round(dnfs / starts * 100, 1),
         NA_real_
       ),
-      mechanical_dnfs = sum(
-        data$mechanical_dnf,
-        na.rm = TRUE
-      )
+      technical_dnfs = sum(data$technical_dnf, na.rm = TRUE)
     )
   })
   
@@ -1451,11 +1275,8 @@ server <- function(input, output, session) {
       paste0(reliability_summary()$dnf_rate, "%")
     )
   })
-  output$reliability_mechanical <- shiny::renderUI({
-    metric_box(
-      "Technical DNFs",
-      reliability_summary()$mechanical_dnfs
-    )
+  output$reliability_technical <- shiny::renderUI({
+    metric_box("Technical DNFs", reliability_summary()$technical_dnfs)
   })
   
   output$dnf_category_chart <- shiny::renderPlot({
@@ -1466,11 +1287,9 @@ server <- function(input, output, session) {
         .by = dnf_category
       ) |>
       tidytable::arrange(dnfs)
-    
     shiny::validate(
       shiny::need(nrow(data) > 0, "No DNFs for this selection.")
     )
-    
     ggplot2::ggplot(
       data,
       ggplot2::aes(
@@ -1484,8 +1303,7 @@ server <- function(input, output, session) {
       ggplot2::theme_minimal()
   })
   
-  
-  output$dnf_subcategory_chart <- shiny::renderPlot({
+  output$dnf_status_chart <- shiny::renderPlot({
     data <- selected_reliability() |>
       tidytable::filter(result_label == "DNF") |>
       tidytable::summarise(
@@ -1493,11 +1311,6 @@ server <- function(input, output, session) {
         .by = dnf_subcategory
       ) |>
       tidytable::arrange(dnfs)
-    
-    shiny::validate(
-      shiny::need(nrow(data) > 0, "No DNFs for this selection.")
-    )
-    
     ggplot2::ggplot(
       data,
       ggplot2::aes(
@@ -1510,43 +1323,9 @@ server <- function(input, output, session) {
       ggplot2::theme_minimal()
   })
   
-  output$retirement_phase_chart <- shiny::renderPlot({
-    data <- selected_reliability() |>
-      tidytable::filter(result_label == "DNF") |>
-      tidytable::summarise(
-        dnfs = tidytable::n(),
-        .by = retirement_phase
-      )
-    
-    phase_levels <- c(
-      "Opening lap",
-      "Early race",
-      "Middle race",
-      "Late race",
-      "Unknown"
-    )
-    
-    data$retirement_phase <- factor(
-      data$retirement_phase,
-      levels = phase_levels
-    )
-    
-    ggplot2::ggplot(
-      data,
-      ggplot2::aes(retirement_phase, dnfs)
-    ) +
-      ggplot2::geom_col(fill = "#3671C6") +
-      ggplot2::labs(x = NULL, y = "DNFs") +
-      ggplot2::theme_minimal() +
-      ggplot2::theme(
-        axis.text.x = ggplot2::element_text(angle = 30, hjust = 1)
-      )
-  })
-  
   output$dnf_rate_chart <- shiny::renderPlot({
     shiny::req(input$reliability_entity)
     entity_id <- as.integer(input$reliability_entity)
-    
     if (input$reliability_type == "Driver") {
       data <- race_results |>
         tidytable::filter(driver_id == entity_id)
@@ -1554,7 +1333,6 @@ server <- function(input, output, session) {
       data <- race_results |>
         tidytable::filter(constructor_id == entity_id)
     }
-    
     data <- data |>
       tidytable::summarise(
         starts = sum(result_label != "DNS", na.rm = TRUE),
@@ -1562,9 +1340,7 @@ server <- function(input, output, session) {
         .by = year
       ) |>
       tidytable::filter(starts > 0) |>
-      tidytable::mutate(dnf_rate = round(dnfs / starts * 100, 1)) |>
-      tidytable::arrange(year)
-    
+      tidytable::mutate(dnf_rate = round(dnfs / starts * 100, 1))
     ggplot2::ggplot(data, ggplot2::aes(year, dnf_rate)) +
       ggplot2::geom_line(linewidth = 1, colour = "#E10600") +
       ggplot2::geom_point(size = 3, colour = "#E10600") +
@@ -1572,143 +1348,82 @@ server <- function(input, output, session) {
       ggplot2::theme_minimal()
   })
   
-  
-  output$constructor_driver_dnf_chart <- shiny::renderPlot({
-    shiny::req(input$reliability_type == "Constructor")
-    shiny::req(input$reliability_entity)
-    
-    plot_data <- selected_reliability() |>
+  output$retirement_phase_chart <- shiny::renderPlot({
+    data <- selected_reliability() |>
       tidytable::filter(result_label == "DNF") |>
       tidytable::summarise(
         dnfs = tidytable::n(),
-        mechanical_dnfs = sum(mechanical_dnf, na.rm = TRUE),
-        .by = driver_name
-      ) |>
-      tidytable::arrange(dnfs)
-    
-    shiny::validate(
-      shiny::need(
-        nrow(plot_data) > 0,
-        "No constructor DNFs are available for this selection."
+        .by = retirement_phase
+      )
+    data$retirement_phase <- factor(
+      data$retirement_phase,
+      levels = c(
+        "Opening lap", "Early race", "Middle race",
+        "Late race", "Unknown"
       )
     )
-    
-    ggplot2::ggplot(
-      plot_data,
-      ggplot2::aes(
-        x = dnfs,
-        y = stats::reorder(driver_name, dnfs)
-      )
-    ) +
-      ggplot2::geom_col(fill = "#E10600") +
-      ggplot2::geom_text(
-        ggplot2::aes(label = dnfs),
-        hjust = -0.2,
-        size = 3.5
-      ) +
-      ggplot2::scale_x_continuous(
-        expand = ggplot2::expansion(mult = c(0, 0.12))
-      ) +
-      ggplot2::labs(
-        x = "DNFs",
-        y = NULL
-      ) +
+    ggplot2::ggplot(data, ggplot2::aes(retirement_phase, dnfs)) +
+      ggplot2::geom_col(fill = "#3671C6") +
+      ggplot2::labs(x = NULL, y = "DNFs") +
       ggplot2::theme_minimal()
   })
   
-  constructor_reliability_by_season <- shiny::reactive({
+  output$constructor_driver_dnf_chart <- shiny::renderPlot({
     shiny::req(input$reliability_type == "Constructor")
-    shiny::req(input$reliability_entity)
-    
-    constructor_id_selected <- as.integer(input$reliability_entity)
-    
-    race_results |>
-      tidytable::filter(
-        constructor_id == constructor_id_selected
-      ) |>
+    data <- selected_reliability() |>
+      tidytable::filter(result_label == "DNF") |>
       tidytable::summarise(
-        entries = tidytable::n(),
+        dnfs = tidytable::n(),
+        .by = driver_name
+      ) |>
+      tidytable::arrange(dnfs)
+    ggplot2::ggplot(
+      data,
+      ggplot2::aes(dnfs, stats::reorder(driver_name, dnfs))
+    ) +
+      ggplot2::geom_col(fill = "#E10600") +
+      ggplot2::labs(x = "DNFs", y = NULL) +
+      ggplot2::theme_minimal()
+  })
+  
+  output$constructor_reliability_table <- shiny::renderTable({
+    shiny::req(input$reliability_type == "Constructor")
+    constructor_id_selected <- as.integer(input$reliability_entity)
+    race_results |>
+      tidytable::filter(constructor_id == constructor_id_selected) |>
+      tidytable::summarise(
         starts = sum(result_label != "DNS", na.rm = TRUE),
-        classified_finishes = sum(
+        finishes = sum(
           !result_label %in% c("DNF", "DNS"),
           na.rm = TRUE
         ),
         dnfs = sum(result_label == "DNF", na.rm = TRUE),
-        mechanical_dnfs = sum(mechanical_dnf, na.rm = TRUE),
-        accident_collision_dnfs = sum(
-          dnf_category == "Accident / Collision",
-          na.rm = TRUE
-        ),
+        technical_dnfs = sum(technical_dnf, na.rm = TRUE),
         .by = year
       ) |>
-      tidytable::filter(starts > 0) |>
       tidytable::mutate(
-        finish_rate = round(
-          classified_finishes / starts * 100,
-          1
-        ),
-        dnf_rate = round(dnfs / starts * 100, 1),
-        mechanical_dnf_rate = round(
-          mechanical_dnfs / starts * 100,
-          1
-        )
+        finish_rate = round(finishes / starts * 100, 1),
+        dnf_rate = round(dnfs / starts * 100, 1)
       ) |>
-      tidytable::arrange(tidytable::desc(year))
-  })
-  
-  output$constructor_reliability_table <- shiny::renderTable({
-    table_data <- constructor_reliability_by_season()
-    
-    if (input$reliability_year != "All seasons") {
-      table_data <- table_data |>
-        tidytable::filter(
-          year == as.integer(input$reliability_year)
-        )
-    }
-    
-    table_data |>
-      tidytable::select(
-        year,
-        starts,
-        classified_finishes,
-        dnfs,
-        mechanical_dnfs,
-        accident_collision_dnfs,
-        finish_rate,
-        dnf_rate,
-        mechanical_dnf_rate
-      ) |>
+      tidytable::arrange(tidytable::desc(year)) |>
       tidytable::rename(
         Season = year,
         Starts = starts,
-        `Classified finishes` = classified_finishes,
+        Finishes = finishes,
         DNFs = dnfs,
-        `Mechanical DNFs` = mechanical_dnfs,
-        `Accident/collision DNFs` = accident_collision_dnfs,
+        `Technical DNFs` = technical_dnfs,
         `Finish rate (%)` = finish_rate,
-        `DNF rate (%)` = dnf_rate,
-        `Mechanical DNF rate (%)` = mechanical_dnf_rate
+        `DNF rate (%)` = dnf_rate
       )
-  },
-  striped = TRUE,
-  hover = TRUE,
-  bordered = TRUE,
-  rownames = FALSE
-  )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, rownames = FALSE)
   
   output$dnf_detail_table <- shiny::renderTable({
     selected_reliability() |>
       tidytable::filter(result_label == "DNF") |>
       tidytable::select(
-        year,
-        round,
-        race_name,
-        driver_name,
-        constructor_name,
-        completed_laps,
-        retirement_phase,
-        race_status,
-        dnf_category,
+        year, round, race_name, driver_name,
+        constructor_name, laps, retirement_phase,
+        race_status, dnf_category
       ) |>
       tidytable::arrange(tidytable::desc(year), round) |>
       tidytable::rename(
@@ -1717,17 +1432,17 @@ server <- function(input, output, session) {
         Race = race_name,
         Driver = driver_name,
         Constructor = constructor_name,
-        `Laps completed` = completed_laps,
+        `Laps completed` = laps,
         `Race phase` = retirement_phase,
-        Status = race_status,
-        Category = dnf_category,
+        `Actual status` = race_status,
+        Category = dnf_category
       )
-  },
-  striped = TRUE,
-  hover = TRUE,
-  bordered = TRUE,
-  rownames = FALSE
-  )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, rownames = FALSE)
 }
+
+
+# ------------------------------------------------------------
+# 7. RUN THE APP
+# ------------------------------------------------------------
 
 shiny::shinyApp(ui = ui, server = server)

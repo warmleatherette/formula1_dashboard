@@ -10,7 +10,7 @@
 
 | Dashboard area | Main question answered |
 |---|---|
-| Race Winners | Who won each race in a selected season? |
+| Race Podiums | Who finished first, second and third in each race? |
 | Driver Head-to-Head | How did two drivers compare within the same season? |
 | World Championships | What were the final driver and constructor standings? |
 | Driver Analysis | How did one driver perform across their career? |
@@ -24,7 +24,7 @@
 4. [Importing and preparing the data](#4-importing-and-preparing-the-data)
 5. [Building the dashboard-ready tables](#5-building-the-dashboard-ready-tables)
 6. [Shiny architecture](#6-shiny-architecture)
-7. [Race Winners tab](#7-race-winners-tab)
+7. [Race Podiums tab](#7-race-podiums-tab)
 8. [Driver Head-to-Head tab](#8-driver-head-to-head-tab)
 9. [World Championships tab](#9-world-championships-tab)
 10. [Driver Analysis tab](#10-driver-analysis-tab)
@@ -293,36 +293,55 @@ outputs. Matching IDs connect the two sides.
 
 | UI element | Server counterpart | Purpose |
 |---|---|---|
-| `selectInput("overview_year")` | `input$overview_year` | Selected race-winner season |
-| `uiOutput("overview_winners")` | `output$overview_winners` | Dynamic winner cards |
+| `selectInput("overview_year")` | `input$overview_year` | Selected race-podium season |
+| `uiOutput("overview_podiums")` | `output$overview_podiums` | Dynamic podium cards |
 | `plotlyOutput("grid_finish_chart")` | `output$grid_finish_chart` | Interactive grid/finish plot |
 | `tableOutput("dnf_detail_table")` | `output$dnf_detail_table` | Detailed retirement records |
 
 > **Reactive reuse:** Create one clearly named reactive dataset for a tab, then use it in multiple
 > outputs. This keeps filtering consistent and makes the code easier to teach and debug.
 
-## 7. Race Winners tab
+## 7. Race Podiums tab
 
-The Race Winners tab filters `race_results` to the selected season, keeps first-place finishes and
-creates one HTML card for each round. The winning constructor controls the background colour.
+The Race Podiums tab filters `race_results` to the selected season, keeps positions 1 to 3
+and creates one three-column podium card for every race.
+
+The outer column background communicates the podium position:
+
+| Column | Background | Driver text size |
+|---|---|---:|
+| 1st | Gold (`#FFD700`) | 20 px |
+| 2nd | Silver (`#C0C0C0`) | 18 px |
+| 3rd | Bronze (`#CD7F32`) | 16 px |
+
+Each column contains an inner driver panel using the constructor colour. This keeps the two
+visual encodings separate: gold, silver and bronze show finishing position, while the inner
+team colour identifies the constructor.
 
 ```r
-winners <- overview_data() |>
-  tidytable::filter(position == 1) |>
-  tidytable::arrange(round)
-
-team_colour <- get_team_colour(
-  winners$constructor_name[i]
-)
-
-text_colour <- get_text_colour(team_colour)
+podiums <- overview_data() |>
+  tidytable::filter(position %in% 1:3) |>
+  tidytable::arrange(round, position)
 ```
 
-### Why the colour logic is separate
+The three columns are created with the same helper function but different podium colours and
+font sizes:
 
-Constructor colour is display metadata rather than race-result data. Storing it in a named vector
-makes it easy to revise colours without changing joins or analytical calculations. Unknown
-historical constructors safely fall back to grey.
+```r
+create_podium_column(1, "#FFD700", "1st", "20px")
+create_podium_column(2, "#C0C0C0", "2nd", "18px")
+create_podium_column(3, "#CD7F32", "3rd", "16px")
+```
+
+The team colour remains visible inside each podium column:
+
+```r
+team_colour <- get_team_colour(result$constructor_name[1])
+team_text_colour <- get_text_colour(team_colour)
+```
+
+> **Visual hierarchy:** First place uses the largest driver text, second place is slightly
+> smaller, and third place is smaller again. The constructor name remains readable at 13 px.
 
 ## 8. Driver Head-to-Head tab
 
