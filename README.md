@@ -77,7 +77,7 @@ The dashboard combines historical race results, championship standings and resul
 ```text
 formula1_dashboard/
 |-- README.md
-`-- data/
+|-- data/
     |-- races.csv
     |-- results.csv
     |-- drivers.csv
